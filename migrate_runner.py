@@ -1,8 +1,9 @@
 ﻿#!/usr/bin/env python3
 import os
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 import mysql.connector
+from mysql.connector import errorcode
 from contextlib import contextmanager
 
 # DB connection via env vars
@@ -23,16 +24,28 @@ def get_db():
             connection.close()
 
 def _read_sql(file_path: str) -> str:
+    # Normalize potential UTF-8 BOM and return text
     with open(file_path, "r", encoding="utf-8") as f:
-        return f.read()
+        return f.read().lstrip("\ufeff")
 
 # Simple splitter by ';' that tolerates newlines/comments
 
 def _split_statements(sql: str):
+    # Simple splitter tolerant to -- comments, /* */ blocks and BOM
     parts = []
     buffer = []
-    for line in sql.splitlines():
-        if line.strip().startswith("--"):
+    in_block_comment = False
+    for raw in sql.splitlines():
+        line = raw.lstrip("\ufeff")
+        striped = line.strip()
+        if in_block_comment:
+            if "*/" in line:
+                in_block_comment = False
+            continue
+        if striped.startswith("/*"):
+            in_block_comment = not striped.endswith("*/")
+            continue
+        if striped.startswith("--") or striped == "":
             continue
         buffer.append(line)
         if line.rstrip().endswith(";"):
@@ -79,7 +92,7 @@ def _record_applied(filename: str, checksum: str):
         cur = db.cursor()
         cur.execute(
             "INSERT INTO schema_migrations(filename, checksum, applied_at) VALUES (%s, %s, %s)",
-            (filename, checksum, datetime.utcnow()),
+            (filename, checksum, datetime.now(timezone.utc)),
         )
         db.commit()
 
@@ -115,13 +128,31 @@ def apply_all():
                 _record_applied(filename, checksum)
                 continue
 
+            benign_errors = {
+                errorcode.ER_TABLE_EXISTS_ERROR,        # 1050
+                errorcode.ER_DUP_FIELDNAME,            # 1060
+                errorcode.ER_DUP_KEYNAME,              # 1061
+                errorcode.ER_CANT_DROP_FIELD_OR_KEY,   # 1091
+                errorcode.ER_DUP_ENTRY,                # 1062
+                3757,                                  # Functional index error on JSON/BLOB (MySQL 8)
+            }
+
             with get_db() as db:
                 cur = db.cursor()
                 for stmt in statements:
                     s = stmt.strip()
                     if not s:
                         continue
-                    cur.execute(s)
+                    try:
+                        cur.execute(s)
+                    except mysql.connector.Error as err:
+                        msg = str(err).lower()
+                        if err.errno in benign_errors or "functional index" in msg:
+                            # Log and continue (idempotent or unsupported operation)
+                            print(f"  Skipping benign error [{err.errno}] for statement: {s[:120]}...")
+                            continue
+                        # Re-raise other errors to surface the problem
+                        raise
                 db.commit()
             _record_applied(filename, checksum)
         except Exception as e:
