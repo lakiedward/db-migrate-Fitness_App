@@ -100,23 +100,46 @@ def apply_all():
             fname = os.path.basename(fp)
             if already_applied(conn, fname, checksum):
                 continue
-            cur = conn.cursor()
             try:
                 for stmt in split_statements(sql):
-                    cur.execute(stmt)
-                conn.commit()
+                    cur = conn.cursor()
+                    try:
+                        cur.execute(stmt)
+                        # Consume any result set to avoid "commands out of sync"
+                        try:
+                            if getattr(cur, "with_rows", False):
+                                cur.fetchall()
+                            # Advance through any additional result sets
+                            advance = getattr(cur, "nextset", None)
+                            if callable(advance):
+                                while True:
+                                    more = advance()
+                                    if not more:
+                                        break
+                                    if getattr(cur, "with_rows", False):
+                                        cur.fetchall()
+                        except Exception:
+                            # Swallow fetch/nextset issues; statement already executed
+                            pass
+                        finally:
+                            cur.close()
+                        conn.commit()
+                    except Exception as ex_stmt:
+                        try:
+                            cur.close()
+                        except Exception:
+                            pass
+                        conn.rollback()
+                        print(f"Failed in {fname} on: {stmt[:120]}... -> {ex_stmt}")
+                        raise
+                # Mark file applied only if all statements executed
                 record_applied(conn, fname, checksum)
                 print(f"Applied: {fname}")
-            except Exception as e:
-                conn.rollback()
-                print(f"Failed {fname}: {e}")
+            except Exception:
                 raise
-            finally:
-                cur.close()
     finally:
         conn.close()
 
 
 if __name__ == "__main__":
     apply_all()
-
