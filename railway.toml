@@ -1,0 +1,2 @@
+﻿[build]
+startCommand = "python migrate_runner.py"
