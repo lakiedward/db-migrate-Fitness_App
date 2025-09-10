@@ -1,33 +1,29 @@
-# DB Migrate (Railway job)
+﻿# db-migrate
 
-Lightweight migration runner for Fitness App.
+Standalone repository for database schema and migrations for Fitness App.
 
-## What it does
-- Connects to MySQL using env vars: `MYSQLHOST, MYSQLPORT, MYSQLUSER, MYSQLPASSWORD, MYSQLDATABASE`.
-- Applies all `.sql` files from `init/` then `migrations/` (alphabetical), skipping `*create_database*.sql`.
-- Tracks applied files in `schema_migrations` (filename + checksum). Safe to rerun.
+Contents
+- `migrations/`: ordered `.sql` files applied incrementally
+- `migrate_runner.py`: lightweight runner that applies all outstanding migrations
+- Optional assets copied from backend: `schema.sql`, `backup.sql`
 
-## Run locally
-```
-python -m venv .venv
-. .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-set MYSQLHOST=...
-set MYSQLUSER=...
-set MYSQLPASSWORD=...
-set MYSQLDATABASE=...
+Run
+```bash
+python -m pip install -r requirements.txt
+# Set env: MYSQLHOST, MYSQLUSER, MYSQLPASSWORD, MYSQLDATABASE, [MYSQLPORT]
 python migrate_runner.py
 ```
 
-## Railway service
-- Root Directory: this repo folder (`db-migrate`).
-- Build: Nixpacks (Python detected via requirements.txt).
-- Start Command: `python -m migrate_runner` (or `python migrate_runner.py`).
-- Variables: set `MYSQLHOST=bd_fitness_app.railway.internal`, `MYSQLPORT=3306`, `MYSQLUSER`, `MYSQLPASSWORD`, `MYSQLDATABASE`.
-- Serverless: ON (optional) — job rulează și se oprește.
-- Restart policy: On Failure (1-2 retries).
+How it works
+- Keeps a `schema_migrations` table (filename, checksum, applied_at)
+- Computes sha256 of each SQL file, applies in lexicographic order
+- Skips files already applied with the same checksum
 
-## Notes
-- Include aici doar migrări idempotente. Inițializarea completă a bazei (schema) se face de serviciul DB la primul boot (init/ din container MySQL).
-- Poți adăuga noi fișiere `.sql` în `migrations/`. Runnerul le va aplica la următorul push.
+Notes
+- Write idempotent SQL where possible (CREATE TABLE IF NOT EXISTS)
+- End statements with `;` so splitting works
+- Avoid `USE <db>`; connection selects database already
 
+Related services
+- Railway service `db-migrate-Fitness_App` should pull from this repo and run `python migrate_runner.py` at start.
+- The FastAPI backend does not carry migration files anymore; it only uses DB via connection env vars.
