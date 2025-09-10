@@ -54,3 +54,30 @@ python apply_migration.py migrations/000_create_users_table.sql
 ## Repozitoare înrudite
 - Backend API: C:\Users\lakie\PycharmProjects\Fitness_app
 - Bootstrap DB: C:\Users\lakie\BD_Fitness_App
+
+---
+
+## English Summary
+
+This repository hosts incremental SQL migrations for the Fitness App database. It runs outside the backend and is designed to be deployed as a separate Railway service (e.g., `db-migrate-Fitness_App`).
+
+Contents
+- `migrations/` – ordered `.sql` files
+- `migrate_runner.py` – applies all outstanding migrations, maintains `schema_migrations`
+- `apply_migration.py` – apply a single file
+- Optional: `schema.sql`, `backup.sql`
+
+Run
+```bash
+python -m pip install -r requirements.txt
+export MYSQLHOST=... MYSQLUSER=... MYSQLPASSWORD=... MYSQLDATABASE=... MYSQLPORT=3306
+python migrate_runner.py
+```
+
+Notes
+- Keep migrations idempotent and end each statement with `;`
+- Avoid `USE <db>`; connection already selects the DB
+
+Related services
+- Railway service `db-migrate-Fitness_App` should run `python migrate_runner.py`
+- The FastAPI backend no longer carries migrations; it only uses the DB via env vars
